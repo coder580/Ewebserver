@@ -158,7 +158,6 @@ int main()
         listen(socket_desc,3);
         printf("listening\n");
         c=sizeof(struct sockaddr_in);
-	wait:
         while( (new_socket=accept(socket_desc,(struct sockaddr *)&client,(socklen_t*)&c))>0 )
         {
 //              client_ip=inet_ntoa(client.sin_addr);
@@ -171,7 +170,6 @@ int main()
 	}
         if (new_socket<0)
 		printf("accept failed");
-        goto wait;
 }
 void nextThread()
 {
