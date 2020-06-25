@@ -1,9 +1,8 @@
-
+#include <sys/time.h>
 #include <sys/socket.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <arpa/inet.h>
-#include <unistd.h>
 #include <string.h>
 #include <pthread.h>
 #include <sys/types.h>
@@ -14,8 +13,11 @@
 #include <ctype.h>
 #include <sys/stat.h>
 #include <pcre.h>
+#include <unistd.h>
+#include <stdlib.h>
 #include "linkedlist.h"
 #include "main.h"
+//so the main function can know which thread to unlock the mutex to
 int currentThread=0;
 int threadsBegun=0;
 void *connection_handler(struct thrd_args *args);
@@ -23,8 +25,8 @@ char *codetotext(int code);
 char *HttpResponse(char *type,int status);
 int footer(int *sock);
 void nextThread();
-
 pthread_mutex_t locks[THREADS];
+//open and memory map files.
 struct viewfile *getfile(char *name)
 {
 	int file;
@@ -37,26 +39,24 @@ struct viewfile *getfile(char *name)
 	fstat(file,&s);
 	file_s->size = s.st_size;
 	file_s->data=mmap(0,file_s->size,PROT_READ,MAP_PRIVATE,file,0);
-	printf("%d\n",file_s->size);
 	close(file);
 	free(path);
 	return file_s;
 }
-
-//url functions
-//main page
-int *main_page(struct conn_data info)
+//400 bad request
+int badRequest(int sock)
 {
-	struct viewfile *file=getfile("index.html");
-	char *res = HttpResponse("text/html",200);
-	write(info.sock,res,strlen(res));
+	struct viewfile *file=getfile("400.html");
+	char *res=HttpResponse("text/html",400);
+	write(sock,res,strlen(res));
 	free(res);
-	write(info.sock,file->data,file->size);
-	close(info.sock);
+	write(sock,file->data,file->size);
+	close(sock);
 	munmap(file->data,file->size);
 	free(file);
 	return 0;
 }
+
 //404 not found
 int notFound(int sock)
 {
@@ -65,42 +65,45 @@ int notFound(int sock)
 	write(sock,res,strlen(res));
 	free(res);
 	write(sock,file->data,file->size);
+	close(sock);
 	munmap(file->data,file->size);
 	free(file);
 	return 0;
 }
-//for webserver:port/numbers/!cgi/amount of numbers
-int *numbers(struct conn_data info)
+//write functions for each url path you want to create."
+//main page
+int *main_page(struct conn_data *info)
 {
-	char *rest=info.url;
+	struct viewfile *file=getfile("index.html");
+	char *res = HttpResponse("text/html",200);
+	write(info->sock,res,strlen(res));
+	free(res);
+	write(info->sock,file->data,file->size);
+	close(info->sock);
+	munmap(file->data,file->size);
+	free(file);
+	return 0;
+}
+//for webserver:port/numbers/!cgi/amount of numbers.
+int *numbers(struct conn_data *info)
+{
+	char *rest=info->url;
 	char *token;
 	char *res=HttpResponse("text/plain",200);
 	char num[500];
 	int len;
-	token=strtok_r(info.cgi,"/",&rest);
-	write(info.sock,res,strlen(res));
+	token=strtok_r(info->cgi,"/",&rest);
+	write(info->sock,res,strlen(res));
 	free(res);
 	for(int i=0;i<atoi(token);i++)
 	{
 		len=sprintf(num,"%d\n",i);
 		printf("%s\n",num);
-		write(info.sock,num,strlen(num));
+		write(info->sock,num,len);
 	}
-	close(info.sock);
+	close(info->sock);
 	return 0;
 }
-int *src(struct conn_data info)
-{
-	struct viewfile *file=getfile("ewebserver.tar.gz");
-	char *res=HttpResponse("archive/gz",200);
-	write(info.sock,res,strlen(res));
-	write(info.sock,file->data,file->size);
-	free(res);
-	munmap(file->data,file->size);
-	free(file);
-	return 0;
-}
-
 int main()
 {
 	//head of linked list
@@ -117,7 +120,9 @@ int main()
 	//start the thread pool
 	for(int i=0;i<THREADS;i++)
 	{
+		//thread typedef
   		pthread_t thread;
+		//stuff to send to threads, pointer to head of linked list and their number
 		struct thrd_args *args=malloc(sizeof(struct thrd_args));
 		args->head=&head;
 		args->thrd_id=i;
@@ -130,10 +135,10 @@ int main()
 	threadsBegun=1;
 
 	int socket_desc, new_socket,c, *new_sock;
-	char *notresponding="the server is not responding at the moment.";
 
         struct sockaddr_in server, client;
         socket_desc=socket(AF_INET,SOCK_STREAM,0);
+	//make the server reuse the address.
 	if(setsockopt(socket_desc,SOL_SOCKET,SO_REUSEADDR,&(int){1},sizeof(int))<0)
 		printf("setsockopt failed\n");
         if (socket_desc==-1)
@@ -165,10 +170,7 @@ int main()
 		pthread_mutex_unlock(&locks[currentThread]);
 	}
         if (new_socket<0)
-        {
 		printf("accept failed");
-		//goto wait;
-	}
         goto wait;
 }
 void nextThread()
@@ -178,72 +180,199 @@ void nextThread()
 	else
 		currentThread++;
 }
+int getPost(struct conn_data *info)
+{
+	char *startofbound=strstr(info->header,"boundary=");
+	if(startofbound==NULL)
+	{
+		printf("POST data invalid at start\n");
+		return 1;
+	}
+
+	char *endofbound=strchr(startofbound,'\n');
+	if(endofbound==NULL)
+	{
+		endofbound=strchr(startofbound,'\r');
+		if(endofbound==NULL)
+		{
+			printf("POST data invalid at end\n");
+			return 1;
+		}
+	}
+
+	char *bound=malloc((endofbound-startofbound)+1);
+	memcpy(bound,startofbound+9,endofbound-startofbound);
+	bound[(endofbound-startofbound)+1]=0;
+	char *body=malloc(info->body_size);
+	memcpy(body,info->body,info->body_size);
+	char *token=strtok(body,bound);
+	while(token!=NULL)
+	{
+		puts(token);
+		token=strtok(token,bound);
+	}
+	free(bound);
+	free(body);
+	return 0;
+}
+
+
 void *connection_handler(struct thrd_args *args)
 {
 	int mythread=args->thrd_id;
 	struct listNode **head=args->head;
 	int *socket_desc;
-        char *token;
-	char *data;
-	char *trail;
-        struct conn_data info;
-	char *rest=info.client_message;
+	char chunk[CHUNK_SIZE];
+	int size_recv;
+	char *content_length;
+//	char *crtonl;
+	char *header=NULL;
+	char *cl;
+	int cl_chars=0;
+        struct conn_data *info=malloc(sizeof(struct conn_data));
+	char *rest=header;
+	info->client_message=malloc(MAX_RECV);
+	struct timeval timeout;
+	timeout.tv_sec=TIMEOUT_SECONDS;
+	timeout.tv_usec=TIMEOUT_MICROSECONDS;
 	struct url_s urls[] = {
 		{"/",main_page},
-		{"/numbers",numbers},
-		{"/src.tar.gz",src}
+		{"/numbers",numbers}
 	};
 	free(args);
 	while(1)
 	{
 		if(currentThread==mythread && *head!=NULL && threadsBegun==1)
+			
 		{
 				socket_desc=(*head)->data;
 				delFirst(&(*head));
 				nextThread();
-				printf("%d\n",mythread);
-				info.sock=*(int *)socket_desc;
-				if (recv(info.sock,info.client_message,9000,0)<4)
+				printf("thread: %d\n",mythread);
+				info->sock=*(int *)socket_desc;
+				if(setsockopt(info->sock,SOL_SOCKET,SO_RCVTIMEO,(char *)&timeout,sizeof(timeout))<0)
+					printf("setsockopt timeout failed.\n");
+				memset(info->client_message,0,MAX_RECV);
+				info->client_message_len=0;
+				info->header_end=NULL;
+				info->header=NULL;
+				info->client_message_len=0;
+				info->header_len=0;
+				info->body_size=0;
+				info->get_d=NULL;
+				while (1)
 				{
-        				printf("the client didnt send any data, or they sent too much\n");
-					goto notFound;
-				}
-
-				token = strtok_r(info.client_message,"\n",&rest);
-        			info.type=strtok_r(token," ",&rest);
-        			info.url=strtok_r(NULL," ",&rest);
-        			info.http_v=strtok_r(NULL," ",&rest);
-				info.get_d=strchr(info.url,'?');
-				if(info.get_d)
-				{
-					memset(info.get_d,0,1);
-					info.get_d++;
-				}
-				info.cgi=strstr(info.url,"!cgi/");
-				if(info.cgi)
-				{
-					memset(info.cgi,0,5);
-					info.cgi+=5;
-					printf("%s\n",info.cgi);
-				}
-				if(strcmp(info.url+strlen(info.url)-1,"/")==0 && strlen(info.url)>1)
-					memset(info.url+strlen(info.url)-1,0,1);
-				printf("%s\n",info.url);
-				for (long unsigned int urll=0;urll<sizeof(urls)/sizeof(urls[0]);urll++)
-				{
-					if (strcmp(urls[urll].path,info.url)==0)
+					memset(chunk,0,CHUNK_SIZE);
+					if ((size_recv=recv(info->sock,chunk,CHUNK_SIZE,0)) <1)
+						break;
+					else
 					{
-						urls[urll].urlfunc(info);
-						goto conn_close;
+						info->client_message_len+=size_recv;
+						if (info->client_message_len>=MAX_RECV)
+						{
+							badRequest(info->sock);
+							goto done;
+						}
+						memcpy(info->client_message+(info->client_message_len-size_recv),chunk,size_recv);
+						if ((info->header_end=strstr(info->client_message,"\r\n\r\n")+1))
+						{
+							info->header_len=(((long unsigned)info->header_end-(long unsigned)info->client_message));
+							info->header=info->client_message;
+							//put a null terminator at the end of the header of the message
+							info->header_end=0;
+							if( !!(cl=strstr(info->header,"Content-Length: ") ))
+							{
+								cl+=strlen("Content-Length: ");
+								if((cl_chars= (strstr(cl,"\n")-cl))<30)
+								{
+									content_length=malloc(cl_chars);
+									memcpy(content_length,cl,cl_chars);
+									info->content_length=atoi(content_length);
+									free(content_length);
+									if(info->header_len+info->content_length>=info->client_message_len)
+										break;
+								}
+								else
+								{
+									badRequest(info->sock);
+									goto done;
+								}
+
+							}
+							else
+								break;
+						}
 					}
 				}
-			notFound:
-				notFound(info.sock);
-			conn_close:
-				close(info.sock);
-				free(socket_desc);
+				//prevent buffer overflow
+				info->client_message[info->client_message_len+1]=0;
+				if(info->header==NULL)
+				{
+					printf("the client didnt send a header\n");
+					badRequest(info->sock);
+					goto done;
+				}
+				if(info->client_message_len<=0)
+				{
+        				printf("the client didnt send any data.\n");
+					badRequest(info->sock);
+					goto done;
+				}
 
-			}	
+			
+//				while((crtonl=strchr(info->client_message,'\r')))
+//				{
+//					memcpy(crtonl,"\n",1);
+//					crtonl++;
+//				}
+				header=malloc(info->header_len);
+				memcpy(header,info->header,info->header_len);
+        			info->type=strtok_r(header," ",&rest);
+        			info->url=strtok_r(NULL," ",&rest);
+        			info->http_v=strtok_r(NULL," ",&rest);
+				info->get_d=strchr(info->url,'?');
+				info->body=info->header_end+1;
+				info->body_size=info->client_message_len-info->header_len;
+				if (!info->url || !info->type || !info->http_v)
+				{
+					badRequest(info->sock);
+					goto done;
+				}
+				if(info->get_d)
+				{
+					memset(info->get_d,0,1);
+					info->get_d++;
+				}
+				info->cgi=strstr(info->url,"!cgi/");
+				if(info->cgi)
+				{
+					memset(info->cgi,0,5);
+					info->cgi+=5;
+				}
+				//remove the trailing slash.
+				if(strcmp(info->url+strlen(info->url)-1,"/")==0 && strlen(info->url)>1)
+					memset(info->url+strlen(info->url)-1,0,1);
+				//iterate over urls in array of structs.
+				for (long unsigned int urll=0;urll<sizeof(urls)/sizeof(urls[0]);urll++)
+				{
+					//check if the url defined in the current struct is the same as the url path.
+					if (strcmp(urls[urll].path,info->url)==0)
+					{
+						//the url matches one in the array of structs, run the function
+						urls[urll].urlfunc(info);
+						goto done;
+					}
+				}
+				notFound(info->sock);
+
+			done:
+				free(socket_desc);
+				if (header!=NULL)
+					free(header);
+
+
+
+			}
 		pthread_mutex_lock(&locks[mythread]);
 
 	}
@@ -252,21 +381,27 @@ void *connection_handler(struct thrd_args *args)
 
 char *HttpResponse(char *type,int status)
 {
+	//get the response text from the number
 	char *code=codetotext(status);
+	//get the size of the mimetype string
 	int mimeSize=strlen(type);
+	//get the string size of the response text
 	int codeSize=strlen(code);
 	char *message_template=
         "HTTP/1.1 %s\n"
         "Server: Ewebserver/1.0\n"
         "Content-Type: %s\r\n\r\n";
+	//get the size of the message template
 	int messageTemplateSize=strlen(message_template);
 	char *message;
-	int changed;
-	message=malloc(messageTemplateSize+codeSize+mimeSize+100);
-	changed=sprintf(message,message_template,code,type);
+	//malloc just enough memory in the heap for the response message
+	message=malloc(messageTemplateSize+codeSize+mimeSize);
+	//merge everything into the malloced message string
+	sprintf(message,message_template,code,type);
+	//return the malloced message string
 	return message;
 }
-int footer(int *sock)
+int advertisement(int *sock)
 {
 	char msg[]="<div style='align: center;'>powered by Ewebserver</div>\n";
 	write(*sock,msg,strlen(msg));

@@ -153,8 +153,8 @@ ETAGS = etags
 CTAGS = ctags
 CSCOPE = cscope
 DIST_SUBDIRS = $(SUBDIRS)
-am__DIST_COMMON = $(srcdir)/Makefile.in AUTHORS COPYING ChangeLog \
-	INSTALL NEWS README compile depcomp install-sh missing
+am__DIST_COMMON = $(srcdir)/Makefile.in ChangeLog INSTALL NEWS compile \
+	depcomp install-sh missing
 DISTFILES = $(DIST_COMMON) $(DIST_SOURCES) $(TEXINFOS) $(EXTRA_DIST)
 distdir = $(PACKAGE)-$(VERSION)
 top_distdir = $(distdir)
@@ -206,7 +206,7 @@ AUTOMAKE = ${SHELL} /home/eschilli/c/ewebserver/missing automake-1.16
 AWK = gawk
 CC = gcc
 CCDEPMODE = depmode=gcc3
-CFLAGS = -std=c99 -Wall -Wextra -pthread -g
+CFLAGS = -std=c11 -Wall -Werror -Wextra -pthread -g
 CPPFLAGS = 
 CYGPATH_W = echo
 DEFS = -DPACKAGE_NAME=\"ewebserver\" -DPACKAGE_TARNAME=\"ewebserver\" -DPACKAGE_VERSION=\"0.1\" -DPACKAGE_STRING=\"ewebserver\ 0.1\" -DPACKAGE_BUGREPORT=\"ethan.p.schilling@gmail.com\" -DPACKAGE_URL=\"\" -DPACKAGE=\"ewebserver\" -DVERSION=\"0.1\"

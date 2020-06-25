@@ -7,7 +7,7 @@ AC_PROG_MAKE_SET
 AC_PROG_CC
 AC_LANG(C)
 
-CFLAGS="-std=c99 -Wall -Wextra -pthread -g"
+CFLAGS="-std=c11 -Wall -Werror -Wextra -pthread -g"
 
 AC_CONFIG_MACRO_DIR([m4])
 
