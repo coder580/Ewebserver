@@ -27,18 +27,18 @@ int footer(int *sock);
 void nextThread();
 pthread_mutex_t locks[THREADS];
 //open and memory map files.
-struct viewfile *getfile(char *name)
+struct viewfile getfile(char *name)
 {
 	int file;
 	struct stat s;
-	struct viewfile *file_s=malloc(sizeof(struct viewfile));
+	struct viewfile file_s;
 	char *path=malloc(strlen(WEBROOT)+strlen(name));
 	memcpy(path,WEBROOT,sizeof(WEBROOT));
-	memcpy(path+strlen(WEBROOT),(char *)name,strlen(name));
+	memcpy(path+strlen(WEBROOT),name,strlen(name));
 	file=open(path,O_RDONLY);
 	fstat(file,&s);
-	file_s->size = s.st_size;
-	file_s->data=mmap(0,file_s->size,PROT_READ,MAP_PRIVATE,file,0);
+	file_s.size = s.st_size;
+	file_s.data=mmap(0,file_s.size,PROT_READ,MAP_PRIVATE,file,0);
 	close(file);
 	free(path);
 	return file_s;
@@ -46,42 +46,39 @@ struct viewfile *getfile(char *name)
 //400 bad request
 int badRequest(int sock)
 {
-	struct viewfile *file=getfile("400.html");
+	struct viewfile file=getfile("400.html");
 	char *res=HttpResponse("text/html",400);
 	write(sock,res,strlen(res));
 	free(res);
-	write(sock,file->data,file->size);
+	write(sock,file.data,file.size);
 	close(sock);
-	munmap(file->data,file->size);
-	free(file);
+	munmap(file.data,file.size);
 	return 0;
 }
 
 //404 not found
 int notFound(int sock)
 {
-	struct viewfile *file=getfile("404.html");
+	struct viewfile file=getfile("404.html");
 	char *res=HttpResponse("text/html",404);
 	write(sock,res,strlen(res));
 	free(res);
-	write(sock,file->data,file->size);
+	write(sock,file.data,file.size);
 	close(sock);
-	munmap(file->data,file->size);
-	free(file);
+	munmap(file.data,file.size);
 	return 0;
 }
 //write functions for each url path you want to create."
 //main page
 int *main_page(struct conn_data *info)
 {
-	struct viewfile *file=getfile("index.html");
+	struct viewfile file=getfile("index.html");
 	char *res = HttpResponse("text/html",200);
 	write(info->sock,res,strlen(res));
 	free(res);
-	write(info->sock,file->data,file->size);
+	write(info->sock,file.data,file.size);
 	close(info->sock);
-	munmap(file->data,file->size);
-	free(file);
+	munmap(file.data,file.size);
 	return 0;
 }
 //for webserver:port/numbers/!cgi/amount of numbers.
@@ -245,136 +242,132 @@ void *connection_handler(struct thrd_args *args)
 		if(currentThread==mythread && *head!=NULL && threadsBegun==1)
 			
 		{
-				socket_desc=(*head)->data;
-				delFirst(&(*head));
-				nextThread();
-				printf("thread: %d\n",mythread);
-				info->sock=*(int *)socket_desc;
-				if(setsockopt(info->sock,SOL_SOCKET,SO_RCVTIMEO,(char *)&timeout,sizeof(timeout))<0)
-					printf("setsockopt timeout failed.\n");
-				memset(info->client_message,0,MAX_RECV);
-				info->client_message_len=0;
-				info->header_end=NULL;
-				info->header=NULL;
-				info->client_message_len=0;
-				info->header_len=0;
-				info->body_size=0;
-				info->get_d=NULL;
-				while (1)
+			socket_desc=(*head)->data;
+			delFirst(&(*head));
+			nextThread();
+			printf("thread: %d\n",mythread);
+			info->sock=*(int *)socket_desc;
+			if(setsockopt(info->sock,SOL_SOCKET,SO_RCVTIMEO,(char *)&timeout,sizeof(timeout))<0)
+				printf("setsockopt timeout failed.\n");
+			memset(info->client_message,0,MAX_RECV);
+			info->client_message_len=0;
+			info->header_end=NULL;
+			info->header=NULL;
+			info->client_message_len=0;
+			info->header_len=0;
+			info->body_size=0;
+			info->get_d=NULL;
+			while (1)
+			{
+				memset(chunk,0,CHUNK_SIZE);
+				if ((size_recv=recv(info->sock,chunk,CHUNK_SIZE,0)) <1)
+					break;
+				else
 				{
-					memset(chunk,0,CHUNK_SIZE);
-					if ((size_recv=recv(info->sock,chunk,CHUNK_SIZE,0)) <1)
-						break;
-					else
+					info->client_message_len+=size_recv;
+					if (info->client_message_len>=MAX_RECV)
 					{
-						info->client_message_len+=size_recv;
-						if (info->client_message_len>=MAX_RECV)
-						{
-							badRequest(info->sock);
-							goto done;
-						}
-						memcpy(info->client_message+(info->client_message_len-size_recv),chunk,size_recv);
-						if ((info->header_end=strstr(info->client_message,"\r\n\r\n")+1))
-						{
-							info->header_len=(((long unsigned)info->header_end-(long unsigned)info->client_message));
-							info->header=info->client_message;
-							//put a null terminator at the end of the header of the message
-							info->header_end=0;
-							if( !!(cl=strstr(info->header,"Content-Length: ") ))
-							{
-								cl+=strlen("Content-Length: ");
-								if((cl_chars= (strstr(cl,"\n")-cl))<30)
-								{
-									content_length=malloc(cl_chars);
-									memcpy(content_length,cl,cl_chars);
-									info->content_length=atoi(content_length);
-									free(content_length);
-									if(info->header_len+info->content_length>=info->client_message_len)
-										break;
-								}
-								else
-								{
-									badRequest(info->sock);
-									goto done;
-								}
-
-							}
-							else
-								break;
-						}
-					}
-				}
-				//prevent buffer overflow
-				info->client_message[info->client_message_len+1]=0;
-				if(info->header==NULL)
-				{
-					printf("the client didnt send a header\n");
-					badRequest(info->sock);
-					goto done;
-				}
-				if(info->client_message_len<=0)
-				{
-        				printf("the client didnt send any data.\n");
-					badRequest(info->sock);
-					goto done;
-				}
-
-			
-//				while((crtonl=strchr(info->client_message,'\r')))
-//				{
-//					memcpy(crtonl,"\n",1);
-//					crtonl++;
-//				}
-				header=malloc(info->header_len);
-				memcpy(header,info->header,info->header_len);
-        			info->type=strtok_r(header," ",&rest);
-        			info->url=strtok_r(NULL," ",&rest);
-        			info->http_v=strtok_r(NULL," ",&rest);
-				info->get_d=strchr(info->url,'?');
-				info->body=info->header_end+1;
-				info->body_size=info->client_message_len-info->header_len;
-				if (!info->url || !info->type || !info->http_v)
-				{
-					badRequest(info->sock);
-					goto done;
-				}
-				if(info->get_d)
-				{
-					memset(info->get_d,0,1);
-					info->get_d++;
-				}
-				info->cgi=strstr(info->url,"!cgi/");
-				if(info->cgi)
-				{
-					memset(info->cgi,0,5);
-					info->cgi+=5;
-				}
-				//remove the trailing slash.
-				if(strcmp(info->url+strlen(info->url)-1,"/")==0 && strlen(info->url)>1)
-					memset(info->url+strlen(info->url)-1,0,1);
-				//iterate over urls in array of structs.
-				for (long unsigned int urll=0;urll<sizeof(urls)/sizeof(urls[0]);urll++)
-				{
-					//check if the url defined in the current struct is the same as the url path.
-					if (strcmp(urls[urll].path,info->url)==0)
-					{
-						//the url matches one in the array of structs, run the function
-						urls[urll].urlfunc(info);
+						badRequest(info->sock);
 						goto done;
 					}
+					memcpy(info->client_message+(info->client_message_len-size_recv),chunk,size_recv);
+					if ((info->header_end=strstr(info->client_message,"\r\n\r\n")+1))
+					{
+						info->header_len=(((long unsigned)info->header_end-(long unsigned)info->client_message));
+						info->header=info->client_message;
+						//put a null terminator at the end of the header of the message
+						info->header_end=0;
+						if( !!(cl=strstr(info->header,"Content-Length: ") ))
+						{
+							cl+=strlen("Content-Length: ");
+							if((cl_chars= (strstr(cl,"\n")-cl))<30)
+							{
+								content_length=malloc(cl_chars);
+								memcpy(content_length,cl,cl_chars);
+								info->content_length=atoi(content_length);
+								free(content_length);
+								if(info->header_len+info->content_length>=info->client_message_len)
+									break;
+							}
+							else
+							{
+								badRequest(info->sock);
+								goto done;
+							}
+						}
+						else
+							break;
+					}
 				}
-				notFound(info->sock);
-
-			done:
-				free(socket_desc);
-				if (header!=NULL)
-					free(header);
-
-
-
 			}
-		pthread_mutex_lock(&locks[mythread]);
+			//prevent buffer overflow
+			info->client_message[info->client_message_len+1]=0;
+			if(info->header==NULL)
+			{
+				printf("the client didnt send a header\n");
+				badRequest(info->sock);
+				goto done;
+			}
+			if(info->client_message_len<=0)
+			{
+       				printf("the client didnt send any data.\n");
+				badRequest(info->sock);
+				goto done;
+			}
+			
+//			while((crtonl=strchr(info->client_message,'\r')))
+//			{
+//				memcpy(crtonl,"\n",1);
+//				crtonl++;
+//			}
+			header=malloc(info->header_len);
+			memcpy(header,info->header,info->header_len);
+       			info->type=strtok_r(header," ",&rest);
+       			info->url=strtok_r(NULL," ",&rest);
+       			info->http_v=strtok_r(NULL," ",&rest);
+			info->get_d=strchr(info->url,'?');
+			info->body=info->header_end+1;
+			info->body_size=info->client_message_len-info->header_len;
+			if (!info->url || !info->type || !info->http_v)
+			{
+				badRequest(info->sock);
+				goto done;
+			}
+			if(info->get_d)
+			{
+				memset(info->get_d,0,1);
+				info->get_d++;
+			}
+			info->cgi=strstr(info->url,"!cgi/");
+			if(info->cgi)
+			{
+				memset(info->cgi,0,5);
+				info->cgi+=5;
+			}
+			//remove the trailing slash.
+			if(strcmp(info->url+strlen(info->url)-1,"/")==0 && strlen(info->url)>1)
+				memset(info->url+strlen(info->url)-1,0,1);
+			//iterate over urls in array of structs.
+			for (long unsigned int urll=0;urll<sizeof(urls)/sizeof(urls[0]);urll++)
+			{
+				//check if the url defined in the current struct is the same as the url path.
+				if (strcmp(urls[urll].path,info->url)==0)
+				{
+					//the url matches one in the array of structs, run the function
+					urls[urll].urlfunc(info);
+					goto done;
+				}
+			}
+			notFound(info->sock);
+			done:
+			free(socket_desc);
+			if (header!=NULL)
+				free(header);
 
+
+
+		}
+		pthread_mutex_lock(&locks[mythread]);
 	}
 }
 //http response
