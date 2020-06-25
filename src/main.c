@@ -103,7 +103,7 @@ int *numbers(struct conn_data *info)
 }
 int main()
 {
-	//head of linked list
+	//head of linked list.
 	struct listNode *head=NULL;
 	//initialize all the locks
 	for(int lp;lp<THREADS;lp++)
