@@ -5,7 +5,7 @@
 #define TIMEOUT_SECONDS 0
 #define TIMEOUT_MICROSECONDS 100000
 #define CHUNK_SIZE 2048
-#define MAX_RECV 512
+#define MAX_RECV 1024
 #define PORT 8000
 #define WEBROOT "./"
 #define THREADS 20
